@@ -16,12 +16,12 @@ type userClaims struct {
 	SessionID int64
 }
 
-func (u *userClaims) Valid() error {
+func (c *userClaims) Valid() error {
 	zeroTime := time.Time{}
-	if u.ExpiresAt != nil && u.ExpiresAt.Before(zeroTime) {
+	if c.ExpiresAt != nil && c.ExpiresAt.Before(zeroTime) {
 		return fmt.Errorf("Token has expired")
 	}
-	if u.SessionID == 0 {
+	if c.SessionID == 0 {
 		return fmt.Errorf("Invalid session id")
 	}
 	return nil
@@ -85,4 +85,13 @@ func checkSig(msg, sig []byte) (bool, error) {
 
 	same := hmac.Equal(newSig, sig)
 	return same, nil
+}
+
+func createToken(c *userClaims) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, c)
+	signedToken, err := token.SignedString(key)
+	if err != nil {
+		return "", fmt.Errorf("Error in createToken when signing token: %w", err)
+	}
+	return signedToken, nil
 }
