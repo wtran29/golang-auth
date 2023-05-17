@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"io"
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
@@ -13,6 +14,7 @@ import (
 func main() {
 
 	msg := "Testing with a really, really long message for aes encryption as an example."
+
 	password := "abcd1234"
 	bs, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	if err != nil {
@@ -20,14 +22,27 @@ func main() {
 	}
 	bs = bs[:16]
 
-	result, err := encryptDecode(bs, msg)
+	wtr := &bytes.Buffer{}
+	encWriter, err := encryptWriter(wtr, bs)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	fmt.Println("before base64", string(result))
+	_, err = io.WriteString(encWriter, msg)
+	if err != nil {
+		log.Fatalln(err)
+	}
 
-	result2, err := encryptDecode(bs, string(result))
+	encrypted := wtr.String()
+
+	// result, err := encryptDecode(bs, msg)
+	// if err != nil {
+	// 	log.Fatalln(err)
+	// }
+
+	fmt.Println("before base64", encrypted)
+
+	result2, err := encryptDecode(bs, encrypted)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -93,4 +108,21 @@ func encryptDecode(key []byte, input string) ([]byte, error) {
 		return nil, fmt.Errorf("could not sw.Write to StreamWriter %w", err)
 	}
 	return buff.Bytes(), nil
+}
+
+// Created wrapper around the writer to encrypt buffer, file, response writer...
+func encryptWriter(wtr io.Writer, key []byte) (io.Writer, error) {
+	// initialization vector
+	b, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("could not NewCipher %w", err)
+	}
+	iv := make([]byte, aes.BlockSize)
+
+	s := cipher.NewCTR(b, iv)
+
+	return cipher.StreamWriter{
+		S: s,
+		W: wtr,
+	}, nil
 }
