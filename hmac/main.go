@@ -1,42 +1,54 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"fmt"
 	"io"
 	"net/http"
 )
 
-func getCode(data string) string {
-	h := hmac.New(sha256.New, []byte("ourkey"))
-	io.WriteString(h, data)
-	return fmt.Sprintf("%x", h.Sum(nil))
+func main() {
+	http.HandleFunc("/", foo)
+	http.HandleFunc("/submit", bar)
+	http.ListenAndServe(":8080", nil)
+
 }
 
-func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("session-id")
-		// cookie is not set
-		if err != nil {
-			//id, _ := uuid.NewV4()
-			cookie = &http.Cookie{
-				Name: "session-id",
-			}
-		}
+func getCode(msg string) string {
 
-		if r.FormValue("email") != "" {
-			cookie.Value = r.FormValue("email")
-		}
+}
 
-		code := getCode(cookie.Value)
-		cookie.Value = code + "|" + cookie.Value
+func bar(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 
-		// this does not run
-		// need to complete code
-		// shown as example of how to authenticate with HMAC
+	email := r.FormValue("email")
+	if email == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 
-		http.SetCookie(w, cookie)
+	c := http.Cookie{
+		Name:  "session-id",
+		Value: email,
+	}
+}
 
-	})
+func foo(w http.ResponseWriter, r *http.Request) {
+	html := `<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>HMAC Example</title>
+	</head>
+	<body>
+		<form action="/submit" method="post">
+			<input type="email" name="email" />
+			<input type="submit" />
+		</form>
+	</body>
+	</html>`
+	io.WriteString(w, html)
 }
