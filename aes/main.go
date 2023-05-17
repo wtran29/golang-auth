@@ -1,128 +1,38 @@
 package main
 
 import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
-
-	"golang.org/x/crypto/bcrypt"
+	"os"
 )
 
 func main() {
-
-	msg := "Testing with a really, really long message for aes encryption as an example."
-
-	password := "abcd1234"
-	bs, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
-	if err != nil {
-		log.Fatalln("could not bcrypt password", err)
-	}
-	bs = bs[:16]
-
-	wtr := &bytes.Buffer{}
-	encWriter, err := encryptWriter(wtr, bs)
+	f, err := os.Open("aes/sample-file.txt")
 	if err != nil {
 		log.Fatalln(err)
 	}
+	defer f.Close()
 
-	_, err = io.WriteString(encWriter, msg)
+	h := sha256.New()
+
+	_, err = io.Copy(h, f)
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalln("could not io.copy", err)
 	}
 
-	encrypted := wtr.String()
+	fmt.Printf("here is the type BEFORE h.Sum: %T\n", h)
+	fmt.Printf("%v\n", h)
+	xb := h.Sum(nil)
+	fmt.Printf("here is the type AFTER h.Sum: %T\n", xb)
+	fmt.Printf("%x\n", xb)
 
-	// result, err := encryptDecode(bs, msg)
-	// if err != nil {
-	// 	log.Fatalln(err)
-	// }
+	xb = h.Sum(nil)
+	fmt.Printf("here is the type AFTER second h.Sum: %T\n", xb)
+	fmt.Printf("%x\n", xb)
 
-	fmt.Println("before base64", encrypted)
-
-	result2, err := encryptDecode(bs, encrypted)
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	fmt.Println(string(result2))
-
-	// key := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
-	// encrypted, err := encrypt([]byte("Hello World!"), key)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// fmt.Println(string(encrypted))
-
-	// decrypted, err := encrypt(encrypted, key)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// fmt.Println(string(decrypted))
-
-}
-
-func encrypt(message, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("Error in encryption: %w", err)
-	}
-
-	stream := cipher.NewOFB(block, make([]byte, aes.BlockSize))
-	buf := &bytes.Buffer{}
-	wtr := cipher.StreamWriter{
-		S: stream,
-		W: buf,
-	}
-
-	_, err = wtr.Write(message)
-	if err != nil {
-		return nil, fmt.Errorf("Error in encryption: %w", err)
-	}
-
-	return buf.Bytes(), err
-}
-
-func encryptDecode(key []byte, input string) ([]byte, error) {
-	b, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("could not NewCipher %w", err)
-	}
-
-	// initialization vector
-	iv := make([]byte, aes.BlockSize)
-
-	s := cipher.NewCTR(b, iv)
-
-	buff := &bytes.Buffer{}
-	sw := cipher.StreamWriter{
-		S: s,
-		W: buff,
-	}
-
-	_, err = sw.Write([]byte(input))
-	if err != nil {
-		return nil, fmt.Errorf("could not sw.Write to StreamWriter %w", err)
-	}
-	return buff.Bytes(), nil
-}
-
-// Created wrapper around the writer to encrypt buffer, file, response writer...
-func encryptWriter(wtr io.Writer, key []byte) (io.Writer, error) {
-	// initialization vector
-	b, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("could not NewCipher %w", err)
-	}
-	iv := make([]byte, aes.BlockSize)
-
-	s := cipher.NewCTR(b, iv)
-
-	return cipher.StreamWriter{
-		S: s,
-		W: wtr,
-	}, nil
+	xb = h.Sum(xb)
+	fmt.Printf("here is the type AFTER third h.Sum: %T\n", xb)
+	fmt.Printf("%x\n", xb)
 }
