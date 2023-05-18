@@ -16,13 +16,14 @@ func main() {
 
 }
 
-func getJWT(msg string) (string, error) {
-	myKey := "secret key that no one knows 4242 long random words"
+type UserClaims struct {
+	jwt.RegisteredClaims
+	Email string
+}
 
-	type UserClaims struct {
-		jwt.RegisteredClaims
-		Email string
-	}
+const myKey = "secret key that no one knows 4242 long random words"
+
+func getJWT(msg string) (string, error) {
 
 	claims := UserClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -72,6 +73,26 @@ func foo(w http.ResponseWriter, r *http.Request) {
 		c = &http.Cookie{}
 	}
 
+	ss := c.Value
+	token, err := jwt.ParseWithClaims(ss, &UserClaims{}, func(t *jwt.Token) (interface{}, error) {
+		return []byte(myKey), nil
+	})
+
+	// RegisteredClaims auto validates in the JWT library
+	// Valid() error method is accessible because it is implemented by Claims interface
+	// RegisteredClaims implements Claims
+	// Valid() method gets run when ParseWithClaims is run to validate token
+
+	isEqual := token.Valid && err == nil
+
+	message := "Not logged in"
+	if isEqual {
+		message = "Logged in"
+		claims := token.Claims.(*UserClaims)
+		fmt.Println(claims.Email)
+		fmt.Println(claims.ExpiresAt)
+	}
+
 	// isEqual := true
 	// xs := strings.SplitN(c.Value, "|", 2)
 	// if len(xs) == 2 {
@@ -81,10 +102,7 @@ func foo(w http.ResponseWriter, r *http.Request) {
 	// 	code := getCode(cEmail)
 	// 	isEqual = hmac.Equal([]byte(cCode), []byte(code))
 	// }
-	message := "Not logged in"
-	if isEqual {
-		message = "Logged in"
-	}
+
 	html := `<!DOCTYPE html>
 	<html lang="en">
 	<head>
