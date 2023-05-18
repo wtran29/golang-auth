@@ -75,6 +75,9 @@ func foo(w http.ResponseWriter, r *http.Request) {
 
 	ss := c.Value
 	token, err := jwt.ParseWithClaims(ss, &UserClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("Invalid signing algorithm")
+		}
 		return []byte(myKey), nil
 	})
 
@@ -83,7 +86,7 @@ func foo(w http.ResponseWriter, r *http.Request) {
 	// RegisteredClaims implements Claims
 	// Valid() method gets run when ParseWithClaims is run to validate token
 
-	isEqual := token.Valid && err == nil
+	isEqual := err == nil && token.Valid
 
 	message := "Not logged in"
 	if isEqual {
