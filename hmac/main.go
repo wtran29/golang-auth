@@ -1,12 +1,12 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func main() {
@@ -16,10 +16,28 @@ func main() {
 
 }
 
-func getCode(msg string) string {
-	h := hmac.New(sha256.New, []byte("i love thursdays when it rains 8723 inches"))
-	h.Write([]byte(msg))
-	return fmt.Sprintf("%x", h.Sum(nil))
+func getJWT(msg string) (string, error) {
+	myKey := "secret key that no one knows 4242 long random words"
+
+	type UserClaims struct {
+		jwt.RegisteredClaims
+		Email string
+	}
+
+	claims := UserClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+		Email: msg,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
+	ss, err := token.SignedString([]byte(myKey))
+	if err != nil {
+		return "", fmt.Errorf("could not signed string %w", err)
+	}
+	return ss, nil
+
 }
 
 func bar(w http.ResponseWriter, r *http.Request) {
@@ -33,11 +51,15 @@ func bar(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	code := getCode(email)
+	ss, err := getJWT(email)
+	if err != nil {
+		http.Error(w, "could not getJWT", http.StatusInternalServerError)
+		return
+	}
 	// "hash / message digest / hash value" | "what we stored"
 	c := http.Cookie{
 		Name:  "session-id",
-		Value: code + "|" + email,
+		Value: ss,
 	}
 
 	http.SetCookie(w, &c)
@@ -50,15 +72,15 @@ func foo(w http.ResponseWriter, r *http.Request) {
 		c = &http.Cookie{}
 	}
 
-	isEqual := true
-	xs := strings.SplitN(c.Value, "|", 2)
-	if len(xs) == 2 {
-		cCode := xs[0]
-		cEmail := xs[1]
+	// isEqual := true
+	// xs := strings.SplitN(c.Value, "|", 2)
+	// if len(xs) == 2 {
+	// 	cCode := xs[0]
+	// 	cEmail := xs[1]
 
-		code := getCode(cEmail)
-		isEqual = hmac.Equal([]byte(cCode), []byte(code))
-	}
+	// 	code := getCode(cEmail)
+	// 	isEqual = hmac.Equal([]byte(cCode), []byte(code))
+	// }
 	message := "Not logged in"
 	if isEqual {
 		message = "Logged in"
