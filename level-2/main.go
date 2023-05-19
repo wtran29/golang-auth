@@ -10,16 +10,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var db = map[string][]byte{}
+var sessions = map[string]string{}
 
-type Session struct {
-	SessionID int64
-}
-
-var key = []byte("this is some secret key example 42 dont stop wont stop")
+const key = "this is some secret key example 42 dont stop wont stop"
 
 func main() {
 	http.HandleFunc("/", home)
@@ -29,6 +27,23 @@ func main() {
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
+	c, err := r.Cookie("session-id")
+	if err != nil {
+		c = &http.Cookie{
+			Name:  "session-id",
+			Value: "",
+		}
+	}
+
+	s, err := parseToken(c.Value)
+	if err != nil {
+		log.Println("index parseToken", err)
+	}
+	var un string
+	if s != "" {
+		un = sessions[s]
+	}
+
 	errMsg := r.FormValue("msg")
 
 	html := `<!DOCTYPE html>
@@ -40,15 +55,18 @@ func home(w http.ResponseWriter, r *http.Request) {
 		<title>Home</title>
 	</head>
 	<body>
+		<p>User: ` + un + `</p>
 		<p>` + errMsg + `</p>
 		<h1>Register</h1>
-		<form action="/register" method="post">
+		<form action="/register" method="POST">
+			<label name="username">Username: </label>
 			<input type="username" name="username" />
+			<label name="password">Password: </label>
 			<input type="password" name="password" />
 			<input type="submit" />
 		</form>
 		<h1>Login</h1>
-		<form action="/login" method="post">
+		<form action="/login" method="POST">
 			<label name="username">Username: </label>
 			<input type="username" name="username" />
 			<label name="password">Password: </label>
@@ -127,13 +145,28 @@ func login(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 		return
 	}
+
+	sUUID := uuid.New().String()
+	sessions[sUUID] = un
+	token, err := createToken(sUUID)
+	if err != nil {
+		log.Println("login trouble with createToken", err)
+	}
+
+	c := http.Cookie{
+		Name:  "session-id",
+		Value: token,
+	}
+
+	http.SetCookie(w, &c)
+
 	msg := url.QueryEscape("you logged in " + un)
 	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 }
 
 func createToken(sid string) (string, error) {
 
-	mac := hmac.New(sha256.New, key)
+	mac := hmac.New(sha256.New, []byte(key))
 	_, err := mac.Write([]byte(sid))
 	if err != nil {
 		return "", fmt.Errorf("Error while trying to hash the session id", err)
@@ -159,7 +192,7 @@ func parseToken(signedToken string) (string, error) {
 		return "", fmt.Errorf("could not parseToken decodestring %w", err)
 	}
 
-	mac := hmac.New(sha256.New, key)
+	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write([]byte(xs[1]))
 
 	ok := hmac.Equal(xb, mac.Sum(nil))
