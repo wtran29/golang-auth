@@ -1,15 +1,14 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -17,6 +16,11 @@ import (
 type user struct {
 	password []byte
 	email    string
+}
+
+type UserClaims struct {
+	jwt.RegisteredClaims
+	SessionID string
 }
 
 var db = map[string]user{}
@@ -40,13 +44,13 @@ func home(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s, err := parseToken(c.Value)
+	sid, err := parseToken(c.Value)
 	if err != nil {
 		log.Println("index parseToken", err)
 	}
 	var un string
-	if s != "" {
-		un = sessions[s]
+	if sid != "" {
+		un = sessions[sid]
 	}
 	var e string
 	if user, ok := db[un]; ok {
@@ -170,7 +174,10 @@ func login(w http.ResponseWriter, r *http.Request) {
 	sessions[sUUID] = un
 	token, err := createToken(sUUID)
 	if err != nil {
-		log.Println("login trouble with createToken", err)
+		log.Println("could not create token in login", err)
+		msg := url.QueryEscape("token not created. internal server error.")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
 	}
 
 	c := http.Cookie{
@@ -185,39 +192,84 @@ func login(w http.ResponseWriter, r *http.Request) {
 }
 
 func createToken(sid string) (string, error) {
-
-	mac := hmac.New(sha256.New, []byte(key))
-	_, err := mac.Write([]byte(sid))
-	if err != nil {
-		return "", fmt.Errorf("Error while trying to hash the session id", err)
+	claims := UserClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+		SessionID: sid,
 	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
+	ss, err := token.SignedString([]byte(key))
+	if err != nil {
+		return "", fmt.Errorf("could not sign token in createToken %w", err)
+	}
+	return ss, nil
+
+	// mac := hmac.New(sha256.New, []byte(key))
+	// _, err := mac.Write([]byte(sid))
+	// if err != nil {
+	// 	return "", fmt.Errorf("Error while trying to hash the session id", err)
+	// }
 	// hex
 	// signedMac := fmt.Sprintf("%x", mac.Sum(nil))
 
 	// base64
-	signedMac := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-	return signedMac + "|" + sid, nil
+	// signedMac := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	// return signedMac + "|" + sid, nil
 
 }
 
 func parseToken(signedToken string) (string, error) {
-	xs := strings.SplitN(signedToken, "|", 2)
-	if len(xs) != 2 {
-		return "", fmt.Errorf("stop hacking me wrong number of items in string parseToken")
-	}
 
-	b64 := xs[0]
-	xb, err := base64.StdEncoding.DecodeString(b64)
+	token, err := jwt.ParseWithClaims(signedToken, &UserClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, errors.New("parseWithClaims invalid signing algorithm")
+		}
+		return []byte(key), nil
+	})
 	if err != nil {
-		return "", fmt.Errorf("could not parseToken decodestring %w", err)
+		return "", fmt.Errorf("could not ParseWithClaims in parseToken %w", err)
 	}
 
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write([]byte(xs[1]))
-
-	ok := hmac.Equal(xb, mac.Sum(nil))
-	if !ok {
-		return "", fmt.Errorf("could not parseToken not equal signed sig and sid")
+	if !token.Valid {
+		return "", fmt.Errorf("token not valid in parseToken")
 	}
-	return xs[1], nil
+
+	return token.Claims.(*UserClaims).SessionID, nil
+	// xs := strings.SplitN(signedToken, "|", 2)
+	// if len(xs) != 2 {
+	// 	return "", fmt.Errorf("stop hacking me wrong number of items in string parseToken")
+	// }
+
+	// b64 := xs[0]
+	// xb, err := base64.StdEncoding.DecodeString(b64)
+	// if err != nil {
+	// 	return "", fmt.Errorf("could not parseToken decodestring %w", err)
+	// }
+
+	// mac := hmac.New(sha256.New, []byte(key))
+	// mac.Write([]byte(xs[1]))
+
+	// ok := hmac.Equal(xb, mac.Sum(nil))
+	// if !ok {
+	// 	return "", fmt.Errorf("could not parseToken not equal signed sig and sid")
+	// }
+	// return xs[1], nil
+}
+
+func getJWT(sid string) (string, error) {
+	claims := UserClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+		},
+		SessionID: sid,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, &claims)
+	ss, err := token.SignedString([]byte(key))
+	if err != nil {
+		return "", fmt.Errorf("SignedString failed %w", err)
+	}
+	return ss, nil
 }
