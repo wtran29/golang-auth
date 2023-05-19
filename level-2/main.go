@@ -14,7 +14,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var db = map[string][]byte{}
+type user struct {
+	password []byte
+	email    string
+}
+
+var db = map[string]user{}
 var sessions = map[string]string{}
 
 const key = "this is some secret key example 42 dont stop wont stop"
@@ -43,10 +48,14 @@ func home(w http.ResponseWriter, r *http.Request) {
 	if s != "" {
 		un = sessions[s]
 	}
+	var e string
+	if user, ok := db[un]; ok {
+		e = user.email
+	}
 
-	errMsg := r.FormValue("msg")
+	errMsg := r.URL.Query().Get("msg")
 
-	html := `<!DOCTYPE html>
+	fmt.Fprintf(w, `<!DOCTYPE html>
 	<html lang="en">
 	<head>
 		<meta charset="UTF-8">
@@ -55,27 +64,28 @@ func home(w http.ResponseWriter, r *http.Request) {
 		<title>Home</title>
 	</head>
 	<body>
-		<p>User: ` + un + `</p>
-		<p>` + errMsg + `</p>
+		<p>User: `+un+` Email: `+e+`</p>
+		<p>`+errMsg+`</p>
 		<h1>Register</h1>
 		<form action="/register" method="POST">
-			<label name="username">Username: </label>
-			<input type="username" name="username" />
-			<label name="password">Password: </label>
+			<label for="username">Username: </label>
+			<input type="text" name="username" />
+			<label for="email">Email: </label>
+			<input type="email" name="email" />
+			<label for="password">Password: </label>
 			<input type="password" name="password" />
 			<input type="submit" />
 		</form>
 		<h1>Login</h1>
 		<form action="/login" method="POST">
-			<label name="username">Username: </label>
-			<input type="username" name="username" />
-			<label name="password">Password: </label>
+			<label for="username">Username: </label>
+			<input type="text" name="username" />
+			<label for="password">Password: </label>
 			<input type="password" name="password" />
 			<input type="submit" />
 		</form>
 	</body>
-	</html>`
-	fmt.Fprint(w, html)
+	</html>`)
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
@@ -99,17 +109,27 @@ func register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	e := r.FormValue("email")
+	if e == "" {
+		msg := url.QueryEscape("your email can not be empty")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	hashedPW, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 	if err != nil {
 		errorMsg := url.QueryEscape("internal server error")
 		http.Error(w, errorMsg, http.StatusInternalServerError)
 		return
 	}
 	log.Println("password", pw)
-	log.Println("bcrypt", hash)
-	db[un] = hash
+	log.Println("bcrypt", hashedPW)
+	db[un] = user{
+		email:    e,
+		password: hashedPW,
+	}
 
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +159,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := bcrypt.CompareHashAndPassword(db[un], []byte(pw))
+	err := bcrypt.CompareHashAndPassword(db[un].password, []byte(pw))
 	if err != nil {
 		msg := url.QueryEscape("username and password do not match")
 		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
