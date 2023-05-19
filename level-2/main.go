@@ -1,15 +1,25 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 var db = map[string][]byte{}
+
+type Session struct {
+	SessionID int64
+}
+
+var key = []byte("this is some secret key example 42 dont stop wont stop")
 
 func main() {
 	http.HandleFunc("/", home)
@@ -119,4 +129,42 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 	msg := url.QueryEscape("you logged in " + un)
 	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+}
+
+func createToken(sid string) (string, error) {
+
+	mac := hmac.New(sha256.New, key)
+	_, err := mac.Write([]byte(sid))
+	if err != nil {
+		return "", fmt.Errorf("Error while trying to hash the session id", err)
+	}
+	// hex
+	// signedMac := fmt.Sprintf("%x", mac.Sum(nil))
+
+	// base64
+	signedMac := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	return signedMac + "|" + sid, nil
+
+}
+
+func parseToken(signedToken string) (string, error) {
+	xs := strings.SplitN(signedToken, "|", 2)
+	if len(xs) != 2 {
+		return "", fmt.Errorf("stop hacking me wrong number of items in string parseToken")
+	}
+
+	b64 := xs[0]
+	xb, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", fmt.Errorf("could not parseToken decodestring %w", err)
+	}
+
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(xs[1]))
+
+	ok := hmac.Equal(xb, mac.Sum(nil))
+	if !ok {
+		return "", fmt.Errorf("could not parseToken not equal signed sig and sid")
+	}
+	return xs[1], nil
 }
