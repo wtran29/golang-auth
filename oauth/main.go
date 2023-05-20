@@ -1,9 +1,8 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -12,6 +11,18 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/github"
 )
+
+// Key is github id, value is user id
+var githubConnections map[string]string
+
+// {"data":{"viewer":{"id":"MDQ6VXNlcjE3Mjg3NjM2"}}}
+type githubResponse struct {
+	Data struct {
+		Viewer struct {
+			ID string `json:"id"`
+		} `json: "viewer"`
+	} `json: "data"`
+}
 
 var githubOauthConfig = &oauth2.Config{
 	ClientID:     "98f0d23316387503378b",
@@ -83,10 +94,24 @@ func completeGithubOauth(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	bs, err := ioutil.ReadAll(resp.Body)
+	// BELOW CODE WAS USED TO GET THE JSON RESPONSE from requestBody
+	// bs, err := ioutil.ReadAll(resp.Body)
+	// if err != nil {
+	// 	http.Error(w, "could not read github information", http.StatusInternalServerError)
+	// 	return
+	// }
+	// log.Println(string(bs))
+
+	var gr githubResponse
+	err = json.NewDecoder(resp.Body).Decode(&gr)
 	if err != nil {
-		http.Error(w, "could not read github information", http.StatusInternalServerError)
+		http.Error(w, "Github invalid response", http.StatusInternalServerError)
 		return
 	}
-	log.Println(string(bs))
+	githubID := gr.Data.Viewer.ID
+	userID, ok := githubConnections[githubID]
+	if !ok {
+		// New user, create account
+	}
+	// Login to account userID using JWT
 }
