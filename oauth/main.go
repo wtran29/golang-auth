@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/oauth2"
@@ -12,15 +15,19 @@ import (
 
 var githubOauthConfig = &oauth2.Config{
 	ClientID:     "98f0d23316387503378b",
-	ClientSecret: os.Getenv("GH_ClientSecret"),
+	ClientSecret: getClientSecret(),
 	Endpoint:     github.Endpoint,
 }
 
-func main() {
+func getClientSecret() string {
 	err := godotenv.Load(".env")
 	if err != nil {
 		fmt.Println("Error loading .env file")
 	}
+	return os.Getenv("GH_ClientSecret")
+}
+
+func main() {
 
 	http.HandleFunc("/", index)
 	http.HandleFunc("/oauth/github", startGithubOauth)
@@ -67,4 +74,19 @@ func completeGithubOauth(w http.ResponseWriter, r *http.Request) {
 
 	ts := githubOauthConfig.TokenSource(r.Context(), token)
 	client := oauth2.NewClient(r.Context(), ts)
+
+	requestBody := strings.NewReader(`{"query": "query {viewer {id}}"}`)
+	resp, err := client.Post("https://api.github.com/graphql", "application/json", requestBody)
+	if err != nil {
+		http.Error(w, "could not get user", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	bs, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "could not read github information", http.StatusInternalServerError)
+		return
+	}
+	log.Println(string(bs))
 }
