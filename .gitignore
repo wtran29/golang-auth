@@ -26,3 +26,6 @@ go.work
 
 # Env variables
 *.env
+
+# Amazon notes on API
+amazon-notes.txt
