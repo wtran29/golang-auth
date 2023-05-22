@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,7 +9,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
@@ -17,47 +16,50 @@ import (
 	"golang.org/x/oauth2/amazon"
 )
 
-func init() {
+func setClientSecret() string {
 	err := godotenv.Load(".env")
 	if err != nil {
 		fmt.Println("Error loading .env file")
 	}
+	return os.Getenv("AWS_ClientSecret")
 }
 
 var AWS_CLIENTSECRET = os.Getenv("AWS_ClientSecret")
-
 var awsOauthConfig = &oauth2.Config{
 	ClientID:     "amzn1.application-oa2-client.423e6afe25344a2da431d15c6a0cf647",
-	ClientSecret: AWS_CLIENTSECRET,
+	ClientSecret: setClientSecret(),
 	Endpoint:     amazon.Endpoint,
-	RedirectURL:  "http://localhost:8080/oauth2/receive",
+	RedirectURL:  "http://localhost:8080/oauth/amazon/receive",
 	Scopes:       []string{"profile"},
 }
 
 type user struct {
 	password []byte
 	email    string
+	// username string
 }
 
-type UserClaims struct {
-	jwt.RegisteredClaims
-	SessionID string
+// temporary set for test
+var db = map[string]user{
+	"test": {
+		email: "test@example.com",
+	},
 }
 
-var db = map[string]user{}
 var sessions = map[string]string{}
 
 // key is uuid from oauth login, value is expiry time
 var oAuthExp = map[string]time.Time{}
 
-const key = "this is some secret key example 42 dont stop wont stop"
+var oAuthConn = map[string]string{}
 
 func main() {
-
 	http.HandleFunc("/", home)
 	http.HandleFunc("/register", register)
 	http.HandleFunc("/login", login)
 	http.HandleFunc("/oauth/amazon/login", oAuthAmznLogin)
+	http.HandleFunc("/oauth/amazon/receive", oAuthAmznReceive)
+	http.HandleFunc("/logout", logout)
 	http.ListenAndServe(":8080", nil)
 }
 
@@ -83,7 +85,7 @@ func home(w http.ResponseWriter, r *http.Request) {
 		e = user.email
 	}
 
-	errMsg := r.URL.Query().Get("msg")
+	errMsg := r.FormValue("msg")
 
 	fmt.Fprintf(w, `<!DOCTYPE html>
 	<html lang="en">
@@ -94,8 +96,8 @@ func home(w http.ResponseWriter, r *http.Request) {
 		<title>Home</title>
 	</head>
 	<body>
-		<p>User: `+un+` Email: `+e+`</p>
-		<p>`+errMsg+`</p>
+		<p>User: %s Email: %s </p>
+		<p>%s</p>
 		<h1>Register</h1>
 		<form action="/register" method="POST">
 			<label for="username">Username: </label>
@@ -119,12 +121,12 @@ func home(w http.ResponseWriter, r *http.Request) {
 			<input type="image" src="https://images-na.ssl-images-amazon.com/images/G/01/lwa/btnLWA_gold_156x32.png"
 			alt="Login with Amazon" width="156" height="32"/>
 		</form>
-		<h1>Login</h1>
+		<h1>Logout</h1>
 		<form action="/logout" method="POST">
 			<input type="submit" value="Logout" />
 		</form>
 	</body>
-	</html>`)
+	</html>`, un, e, errMsg)
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
@@ -205,109 +207,75 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sUUID := uuid.New().String()
-	sessions[sUUID] = un
-	token, err := createToken(sUUID)
+	err = createSession(un, w)
 	if err != nil {
-		log.Println("could not create token in login", err)
+		log.Println("could not createSession in login", err)
 		msg := url.QueryEscape("token not created. internal server error.")
 		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 		return
 	}
 
-	c := http.Cookie{
-		Name:  "session-id",
-		Value: token,
-	}
-
-	http.SetCookie(w, &c)
-
 	msg := url.QueryEscape("you logged in " + un)
 	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 }
 
-func createToken(sid string) (string, error) {
-	claims := UserClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-		},
-		SessionID: sid,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &claims)
-	ss, err := token.SignedString([]byte(key))
+func createSession(un string, w http.ResponseWriter) error {
+	sUUID := uuid.New().String()
+	sessions[sUUID] = un
+	token, err := createToken(sUUID)
 	if err != nil {
-		return "", fmt.Errorf("could not sign token in createToken %w", err)
+		return fmt.Errorf("could not create token in createSession %w", err)
 	}
-	return ss, nil
 
-	// mac := hmac.New(sha256.New, []byte(key))
-	// _, err := mac.Write([]byte(sid))
-	// if err != nil {
-	// 	return "", fmt.Errorf("Error while trying to hash the session id", err)
-	// }
-	// hex
-	// signedMac := fmt.Sprintf("%x", mac.Sum(nil))
+	c := http.Cookie{
+		Name:  "session-id",
+		Value: token,
+		Path:  "/",
+	}
 
-	// base64
-	// signedMac := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-	// return signedMac + "|" + sid, nil
-
+	http.SetCookie(w, &c)
+	return nil
 }
 
-func parseToken(signedToken string) (string, error) {
+func logout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 
-	token, err := jwt.ParseWithClaims(signedToken, &UserClaims{}, func(t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() != jwt.SigningMethodHS256.Alg() {
-			return nil, errors.New("parseWithClaims invalid signing algorithm")
+	c, err := r.Cookie("session-id")
+	if err != nil {
+		c = &http.Cookie{
+			Name:  "session-id",
+			Value: "",
 		}
-		return []byte(key), nil
-	})
+	}
+
+	sid, err := parseToken(c.Value)
 	if err != nil {
-		return "", fmt.Errorf("could not ParseWithClaims in parseToken %w", err)
+		log.Println("index parseToken", err)
 	}
-
-	if !token.Valid {
-		return "", fmt.Errorf("token not valid in parseToken")
-	}
-
-	return token.Claims.(*UserClaims).SessionID, nil
-	// xs := strings.SplitN(signedToken, "|", 2)
-	// if len(xs) != 2 {
-	// 	return "", fmt.Errorf("stop hacking me wrong number of items in string parseToken")
-	// }
-
-	// b64 := xs[0]
-	// xb, err := base64.StdEncoding.DecodeString(b64)
-	// if err != nil {
-	// 	return "", fmt.Errorf("could not parseToken decodestring %w", err)
-	// }
-
-	// mac := hmac.New(sha256.New, []byte(key))
-	// mac.Write([]byte(xs[1]))
-
-	// ok := hmac.Equal(xb, mac.Sum(nil))
-	// if !ok {
-	// 	return "", fmt.Errorf("could not parseToken not equal signed sig and sid")
-	// }
-	// return xs[1], nil
+	delete(sessions, sid)
+	c.MaxAge = -1
+	http.SetCookie(w, c)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func getJWT(sid string) (string, error) {
-	claims := UserClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
-		},
-		SessionID: sid,
-	}
+// func getJWT(sid string) (string, error) {
+// 	claims := UserClaims{
+// 		RegisteredClaims: jwt.RegisteredClaims{
+// 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(5 * time.Minute)),
+// 		},
+// 		SessionID: sid,
+// 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, &claims)
-	ss, err := token.SignedString([]byte(key))
-	if err != nil {
-		return "", fmt.Errorf("SignedString failed %w", err)
-	}
-	return ss, nil
-}
+// 	token := jwt.NewWithClaims(jwt.SigningMethodES256, &claims)
+// 	ss, err := token.SignedString([]byte(key))
+// 	if err != nil {
+// 		return "", fmt.Errorf("SignedString failed %w", err)
+// 	}
+// 	return ss, nil
+// }
 
 func oAuthAmznLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -319,6 +287,102 @@ func oAuthAmznLogin(w http.ResponseWriter, r *http.Request) {
 	oAuthExp[id] = time.Now().Add(time.Hour)
 
 	// redirect to amazon at the AuthURL endpoint
+	// adds state, scope, client id
 	http.Redirect(w, r, awsOauthConfig.AuthCodeURL(id), http.StatusSeeOther)
-	return
+
+}
+
+func oAuthAmznReceive(w http.ResponseWriter, r *http.Request) {
+
+	// code is given by amazon
+	code := r.FormValue("code")
+	if code == "" {
+		msg := url.QueryEscape("code was empty in oAuthAmznReceive")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	state := r.FormValue("state")
+	if state == "" {
+		msg := url.QueryEscape("state was empty in oAuthAmznReceive")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	expiry := oAuthExp[state]
+	if time.Now().After(expiry) {
+		msg := url.QueryEscape("oauth time expired in oAuthAmznReceive")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+	// exchange the amazon code for a token
+	// uses the client secret and TokenURL is called
+	// we get back a token
+	token, err := awsOauthConfig.Exchange(r.Context(), code)
+	if err != nil {
+		msg := url.QueryEscape("could not do oauth exchange: " + err.Error())
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	// will look for an access token or refresh token and return a token source
+	// which has method token()
+	ts := awsOauthConfig.TokenSource(r.Context(), token)
+	client := oauth2.NewClient(r.Context(), ts)
+
+	res, err := client.Get("https://api.amazon.com/user/profile")
+	if err != nil {
+		msg := url.QueryEscape("could not get amazon data: " + err.Error())
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	defer res.Body.Close()
+
+	// bs, err := io.ReadAll(res.Body)
+	// if err != nil {
+	// 	msg := url.QueryEscape("could not read amazon information: " + err.Error())
+	// 	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+	// 	return
+	// }
+
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		msg := url.QueryEscape("not status 200: " + res.Status)
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+	// fmt.Println(string(bs))
+
+	// io.WriteString(w, string(bs))
+
+	type AmazonProfile struct {
+		Email  string `json:"email"`
+		Name   string `json:"name"`
+		UserID string `json:"user_id"`
+	}
+
+	var ap AmazonProfile
+
+	err = json.NewDecoder(res.Body).Decode(&ap)
+	if err != nil {
+		msg := url.QueryEscape("not able to decode json response")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+	user, ok := oAuthConn[ap.UserID]
+	if !ok {
+		user = "test"
+	}
+
+	err = createSession(user, w)
+	if err != nil {
+		log.Println("could not createSession in oAuthAmznReceive", err)
+		msg := url.QueryEscape("token not created. internal server error.")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	msg := url.QueryEscape("you logged in " + user)
+	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+
 }
