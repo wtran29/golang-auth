@@ -40,11 +40,7 @@ type user struct {
 }
 
 // temporary set for test
-var db = map[string]user{
-	"test": {
-		email: "test@example.com",
-	},
-}
+var db = map[string]user{}
 
 var sessions = map[string]string{}
 
@@ -59,6 +55,7 @@ func main() {
 	http.HandleFunc("/login", login)
 	http.HandleFunc("/oauth/amazon/login", oAuthAmznLogin)
 	http.HandleFunc("/oauth/amazon/receive", oAuthAmznReceive)
+	http.HandleFunc("/partial-register", partialRegister)
 	http.HandleFunc("/logout", logout)
 	http.ListenAndServe(":8080", nil)
 }
@@ -371,13 +368,26 @@ func oAuthAmznReceive(w http.ResponseWriter, r *http.Request) {
 	}
 	user, ok := oAuthConn[ap.UserID]
 	if !ok {
-		user = "test"
+		signedToken, err := createToken(ap.UserID)
+		if err != nil {
+			log.Println("could not createToken in oAuthAmznReceive", err)
+			msg := url.QueryEscape("token not created. internal server error.")
+			http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+			return
+		}
+
+		uv := url.Values{}
+		uv.Add("sst", signedToken)
+		uv.Add("name", ap.Name)
+		uv.Add("email", ap.Email)
+		http.Redirect(w, r, "/partial-register?"+uv.Encode(), http.StatusSeeOther)
+		return
 	}
 
 	err = createSession(user, w)
 	if err != nil {
 		log.Println("could not createSession in oAuthAmznReceive", err)
-		msg := url.QueryEscape("token not created. internal server error.")
+		msg := url.QueryEscape("session not created. internal server error.")
 		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 		return
 	}
@@ -385,4 +395,36 @@ func oAuthAmznReceive(w http.ResponseWriter, r *http.Request) {
 	msg := url.QueryEscape("you logged in " + user)
 	http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
 
+}
+
+func partialRegister(w http.ResponseWriter, r *http.Request) {
+	sst := r.FormValue("sst")
+	name := r.FormValue("name")
+	email := r.FormValue("email")
+
+	if sst == "" {
+		log.Println("could not get sst in partialRegister")
+		msg := url.QueryEscape("could not get sst. internal server error.")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+	fmt.Fprintf(w, `<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Document</title>
+	</head>
+	<body>
+		<form action="/oauth/amazon/register" method="post">
+			<label for="name">Full Name</label>
+			<input type="text" name="name" id="name" value="%s">
+			<label for="email">Email</label>
+			<input type="text" name="email" id="email" value="%s">
+			<input type="hidden" value="%s" name="oauthID">
+			<input type="submit">
+		</form>
+	</body>
+	</html>`, name, email, sst)
 }
