@@ -422,6 +422,8 @@ func partialRegister(w http.ResponseWriter, r *http.Request) {
 		<form action="/oauth/amazon/register" method="post">
 			<label for="name">Full Name</label>
 			<input type="text" name="name" id="name" value="%s">
+			<label for="username">Username</label>
+			<input type="text" name="username" id="username">
 			<label for="email">Email</label>
 			<input type="text" name="email" id="email" value="%s">
 			<input type="hidden" value="%s" name="oauthID">
@@ -453,6 +455,13 @@ func oAuthAmznRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	un := r.FormValue("username")
+	if un == "" {
+		msg := url.QueryEscape("your username can not be empty")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
 	oauthID := r.FormValue("oauthID")
 	if oauthID == "" {
 		log.Println("oauthID came through as empty at oAuthAmznRegister")
@@ -469,13 +478,14 @@ func oAuthAmznRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db[e] = user{
-		name: name,
+	db[un] = user{
+		name:  name,
+		email: e,
 	}
 
 	oAuthConn[amznUID] = e
 
-	err = createSession(e, w)
+	err = createSession(un, w)
 	if err != nil {
 		log.Println("could not createSession in oAuthAmznRegister", err)
 		msg := url.QueryEscape("token not created. internal server error.")
