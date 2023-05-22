@@ -36,6 +36,7 @@ var awsOauthConfig = &oauth2.Config{
 type user struct {
 	password []byte
 	email    string
+	name     string
 	// username string
 }
 
@@ -56,6 +57,7 @@ func main() {
 	http.HandleFunc("/oauth/amazon/login", oAuthAmznLogin)
 	http.HandleFunc("/oauth/amazon/receive", oAuthAmznReceive)
 	http.HandleFunc("/partial-register", partialRegister)
+	http.HandleFunc("/oauth/amazon/register", oAuthAmznRegister)
 	http.HandleFunc("/logout", logout)
 	http.ListenAndServe(":8080", nil)
 }
@@ -427,4 +429,59 @@ func partialRegister(w http.ResponseWriter, r *http.Request) {
 		</form>
 	</body>
 	</html>`, name, email, sst)
+}
+
+func oAuthAmznRegister(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodPost {
+		msg := url.QueryEscape("your method was not post")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	e := r.FormValue("email")
+	if e == "" {
+		msg := url.QueryEscape("your email can not be empty")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	name := r.FormValue("name")
+	if name == "" {
+		msg := url.QueryEscape("your name can not be empty")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	oauthID := r.FormValue("oauthID")
+	if oauthID == "" {
+		log.Println("oauthID came through as empty at oAuthAmznRegister")
+		msg := url.QueryEscape("your oauthID can not be empty")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	amznUID, err := parseToken(oauthID)
+	if err != nil {
+		log.Println("could not parseToken to set amznID at oAuthAmznRegister")
+		msg := url.QueryEscape("there was an issue")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	db[e] = user{
+		name: name,
+	}
+
+	oAuthConn[amznUID] = e
+
+	err = createSession(e, w)
+	if err != nil {
+		log.Println("could not createSession in oAuthAmznRegister", err)
+		msg := url.QueryEscape("token not created. internal server error.")
+		http.Redirect(w, r, "/?msg="+msg, http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
